@@ -1,0 +1,42 @@
+# Flutter/Dart/Pub
+.dart_tool/
+.packages
+.pub-cache/
+.pub/
+build/
+generated_plugin_registrant.dart
+
+# Drift build files
+*.g.dart
+*.moor.dart
+*.drift.dart
+
+# IntelliJ / VS Code
+.idea/
+.vscode/
+*.iml
+
+# Android
+local.properties
+**/android/**/debug/
+**/android/**/release/
+
+# iOS
+**/ios/Pods/
+**/ios/.symlinks/
+**/ios/Flutter/Flutter.framework/
+**/ios/Flutter/Flutter.podspec
+**/ios/Flutter/App.framework
+**/ios/ServiceDefinitions.json
+
+# Linux / macOS / Windows build folders
+linux/build/
+macos/build/
+windows/build/
+
+# Web
+web/.dart_tool/
+
+# Logs
+*.log
+
