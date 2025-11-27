@@ -61,62 +61,89 @@ class _AgendaPageState extends State<AgendaPage> {
   Widget _buildAppointmentCard(Map<String, dynamic> appt) {
     final dt = DateTime.parse(appt["appointment_datetime"]);
     final hour = DateFormat("HH:mm").format(dt);
-    final date = DateFormat("dd/MM/yyyy").format(dt);
 
-    List<Widget> patients = [];
+    // Build patient rows
+    List<String?> names = [
+      appt['patient_name1'],
+      appt['patient_name2'],
+      appt['patient_name3'],
+    ];
 
-    void addPatient(String? name, bool? presence) {
-      if (name != null && name.trim().isNotEmpty) {
-        patients.add(
-          Row(
-            children: [
-              Icon(
-                presence == null
-                    ? Icons.help_outline
-                    : presence
-                        ? Icons.check_circle
-                        : Icons.cancel,
-                color: presence == null
-                    ? Colors.grey
-                    : presence
-                        ? Colors.green
-                        : Colors.red,
-                size: 18,
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  name,
-                  style: const TextStyle(fontSize: 16),
-                ),
-              ),
-            ],
-          ),
-        );
+    List<bool?> presences = [
+      appt['patient_presence1'],
+      appt['patient_presence2'],
+      appt['patient_presence3'],
+    ];
+
+    List<Widget> patientRows = [];
+
+    for (int i = 0; i < names.length; i++) {
+      final name = names[i];
+      final presence = presences[i];
+
+      if (name == null || name.trim().isEmpty) continue;
+
+      IconData icon;
+      Color color;
+
+      if (presence == null) {
+        icon = Icons.help_outline;
+        color = Colors.grey;
+      } else if (presence == true) {
+        icon = Icons.check_circle;
+        color = Colors.green;
+      } else {
+        icon = Icons.cancel;
+        color = Colors.red;
       }
-    }
 
-    addPatient(appt['patient_name1'], appt['patient_presence1']);
-    addPatient(appt['patient_name2'], appt['patient_presence2']);
-    addPatient(appt['patient_name3'], appt['patient_presence3']);
+      patientRows.add(
+        Row(
+          children: [
+            Expanded(
+              child: Text(
+                name,
+                style: const TextStyle(fontSize: 16),
+              ),
+            ),
+            Icon(icon, color: color, size: 20),
+          ],
+        ),
+      );
+    }
 
     return Card(
       margin: const EdgeInsets.symmetric(vertical: 6, horizontal: 12),
       elevation: 2,
       child: Padding(
         padding: const EdgeInsets.all(12),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.center,
           children: [
-            Text(
-              "$date  •  $hour",
-              style: const TextStyle(
-                fontSize: 17,
-                fontWeight: FontWeight.bold,
+            // LEFT — TIME
+            SizedBox(
+              width: 60,
+              child: Center(
+                child: Text(
+                  hour,
+                  style: const TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
               ),
             ),
-            const SizedBox(height: 8),
-            ...patients,
+
+            // MIDDLE — PATIENT NAMES
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: patientRows,
+              ),
+            ),
+
+            // RIGHT — PRESENCE ICONS (already included in the rows above)
           ],
         ),
       ),
@@ -125,7 +152,8 @@ class _AgendaPageState extends State<AgendaPage> {
 
   /// Group appointments by day for display
   Map<DateTime, List<Map<String, dynamic>>> _groupByDay(
-      List<Map<String, dynamic>> rows) {
+    List<Map<String, dynamic>> rows) {
+
     final map = <DateTime, List<Map<String, dynamic>>>{};
 
     for (final a in rows) {
@@ -134,13 +162,21 @@ class _AgendaPageState extends State<AgendaPage> {
       map.putIfAbsent(day, () => []).add(a);
     }
 
+    // Sort days AND sort items inside each day
     final sorted = <DateTime, List<Map<String, dynamic>>>{};
     for (final k in map.keys.toList()..sort()) {
-      sorted[k] = map[k]!;
+      final dayList = map[k]!;
+      dayList.sort((a, b) {
+        final t1 = DateTime.parse(a['appointment_datetime']);
+        final t2 = DateTime.parse(b['appointment_datetime']);
+        return t1.compareTo(t2);
+      });
+      sorted[k] = dayList;
     }
 
     return sorted;
   }
+
 
   @override
   Widget build(BuildContext context) {
