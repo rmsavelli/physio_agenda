@@ -6,8 +6,7 @@ import 'package:intl/intl.dart';
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // Load environment variables first
-  await dotenv.load();
+  await dotenv.load(); // load .env
 
   final supabaseUrl = dotenv.env['SUPABASE_URL']!;
   final supabaseAnonKey = dotenv.env['SUPABASE_ANON_KEY']!;
@@ -58,11 +57,48 @@ class _AgendaPageState extends State<AgendaPage> {
     return List<Map<String, dynamic>>.from(data);
   }
 
+  Widget _buildPatientRow(String? name, bool? presence) {
+    final isEmpty = name == null || name.trim().isEmpty;
+
+    IconData icon;
+    Color iconColor;
+
+    if (isEmpty) {
+      icon = Icons.remove_circle_outline;
+      iconColor = Colors.grey.withValues(alpha: 0.3); // updated
+    } else if (presence == null) {
+      icon = Icons.help_outline;
+      iconColor = Colors.grey;
+    } else if (presence == true) {
+      icon = Icons.check_circle;
+      iconColor = Colors.green;
+    } else {
+      icon = Icons.cancel;
+      iconColor = Colors.red;
+    }
+
+    return Row(
+      children: [
+        Expanded(
+          child: Text(
+            isEmpty ? "(empty)" : name,
+            style: TextStyle(
+              fontSize: 16,
+              color: isEmpty
+                  ? Colors.black.withValues(alpha: 0.4) // updated
+                  : Colors.black,
+            ),
+          ),
+        ),
+        Icon(icon, color: iconColor, size: 20),
+      ],
+    );
+  }
+
   Widget _buildAppointmentCard(Map<String, dynamic> appt) {
     final dt = DateTime.parse(appt["appointment_datetime"]);
     final hour = DateFormat("HH:mm").format(dt);
 
-    // Build patient rows
     List<String?> names = [
       appt['patient_name1'],
       appt['patient_name2'],
@@ -75,76 +111,46 @@ class _AgendaPageState extends State<AgendaPage> {
       appt['patient_presence3'],
     ];
 
-    List<Widget> patientRows = [];
-
-    for (int i = 0; i < names.length; i++) {
-      final name = names[i];
-      final presence = presences[i];
-
-      if (name == null || name.trim().isEmpty) continue;
-
-      IconData icon;
-      Color color;
-
-      if (presence == null) {
-        icon = Icons.help_outline;
-        color = Colors.grey;
-      } else if (presence == true) {
-        icon = Icons.check_circle;
-        color = Colors.green;
-      } else {
-        icon = Icons.cancel;
-        color = Colors.red;
-      }
-
-      patientRows.add(
-        Row(
-          children: [
-            Expanded(
-              child: Text(
-                name,
-                style: const TextStyle(fontSize: 16),
-              ),
-            ),
-            Icon(icon, color: color, size: 20),
-          ],
-        ),
-      );
-    }
-
     return Card(
       margin: const EdgeInsets.symmetric(vertical: 6, horizontal: 12),
       elevation: 2,
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.center,
-          children: [
-            // LEFT — TIME
-            SizedBox(
-              width: 60,
-              child: Center(
-                child: Text(
-                  hour,
-                  style: const TextStyle(
-                    fontSize: 18,
-                    fontWeight: FontWeight.bold,
+      child: SizedBox(
+        height: 120, // ← FIXED HEIGHT for all cards
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              // LEFT — TIME
+              SizedBox(
+                width: 60,
+                child: Center(
+                  child: Text(
+                    hour,
+                    style: const TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold,
+                    ),
                   ),
                 ),
               ),
-            ),
 
-            // MIDDLE — PATIENT NAMES
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: patientRows,
+              const SizedBox(width: 12),
+
+              // MIDDLE — ALWAYS SHOW 3 PLACEHOLDERS
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                  children: [
+                    _buildPatientRow(names[0], presences[0]),
+                    _buildPatientRow(names[1], presences[1]),
+                    _buildPatientRow(names[2], presences[2]),
+                  ],
+                ),
               ),
-            ),
-
-            // RIGHT — PRESENCE ICONS (already included in the rows above)
-          ],
+            ],
+          ),
         ),
       ),
     );
@@ -176,7 +182,6 @@ class _AgendaPageState extends State<AgendaPage> {
 
     return sorted;
   }
-
 
   @override
   Widget build(BuildContext context) {
