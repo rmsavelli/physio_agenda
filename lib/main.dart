@@ -6,7 +6,7 @@ import 'package:intl/intl.dart';
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  await dotenv.load(); // load .env
+  await dotenv.load();
 
   final supabaseUrl = dotenv.env['SUPABASE_URL']!;
   final supabaseAnonKey = dotenv.env['SUPABASE_ANON_KEY']!;
@@ -57,7 +57,25 @@ class _AgendaPageState extends State<AgendaPage> {
     return List<Map<String, dynamic>>.from(data);
   }
 
-  Widget _buildPatientRow(String? name, bool? presence) {
+  /// Update presence in DB
+  Future<void> _updatePresence(
+      int id, int index, bool? newValue) async {
+
+    await supabase.from('appointments').update({
+      'patient_presence${index + 1}': newValue,
+    }).eq('id', id);
+  }
+
+  /// Cycle presence: NULL → TRUE → FALSE → NULL
+  bool? _nextPresence(bool? current) {
+    if (current == null) return true;
+    if (current == true) return false;
+    return null;
+  }
+
+  /// Build interactive patient row with NEW icons
+  Widget _buildPatientRow(
+      int apptId, int index, String? name, bool? presence) {
     final isEmpty = name == null || name.trim().isEmpty;
 
     IconData icon;
@@ -65,39 +83,66 @@ class _AgendaPageState extends State<AgendaPage> {
 
     if (isEmpty) {
       icon = Icons.remove_circle_outline;
-      iconColor = Colors.grey.withValues(alpha: 0.3); // updated
+      iconColor = Colors.grey.withValues(alpha: 0.3);
     } else if (presence == null) {
       icon = Icons.help_outline;
       iconColor = Colors.grey;
     } else if (presence == true) {
-      icon = Icons.check_circle;
+      icon = Icons.check;
       iconColor = Colors.green;
     } else {
-      icon = Icons.cancel;
+      // NEW: Red X instead of red square
+      icon = Icons.close;
       iconColor = Colors.red;
     }
 
-    return Row(
-      children: [
-        Expanded(
-          child: Text(
-            isEmpty ? "(empty)" : name,
-            style: TextStyle(
-              fontSize: 16,
-              color: isEmpty
-                  ? Colors.black.withValues(alpha: 0.4) // updated
-                  : Colors.black,
+    return GestureDetector(
+      onTap: isEmpty
+          ? null
+          : () async {
+              final newPresence = _nextPresence(presence);
+
+              await _updatePresence(apptId, index, newPresence);
+
+              setState(() {
+                _futureAppointments = _fetchAppointments();
+              });
+            },
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(
+              isEmpty ? "(empty)" : name,
+              style: TextStyle(
+                fontSize: 16,
+                color: isEmpty
+                    ? Colors.black.withValues(alpha: 0.4)
+                    : Colors.black,
+              ),
             ),
           ),
-        ),
-        Icon(icon, color: iconColor, size: 20),
-      ],
+          Icon(
+            icon,
+            color: iconColor,
+            size: 24,          // bigger = more visible
+            weight: 900,       // makes it bold
+            shadows: [
+              Shadow(
+                blurRadius: 2,
+                color: Colors.black26,
+                offset: Offset(0, 1),
+              ),
+            ],
+          ),
+        ],
+      ),
     );
   }
 
   Widget _buildAppointmentCard(Map<String, dynamic> appt) {
     final dt = DateTime.parse(appt["appointment_datetime"]);
     final hour = DateFormat("HH:mm").format(dt);
+    final apptId = appt["id"] as int;
 
     List<String?> names = [
       appt['patient_name1'],
@@ -115,13 +160,11 @@ class _AgendaPageState extends State<AgendaPage> {
       margin: const EdgeInsets.symmetric(vertical: 6, horizontal: 12),
       elevation: 2,
       child: SizedBox(
-        height: 120, // ← FIXED HEIGHT for all cards
+        height: 120,
         child: Padding(
           padding: const EdgeInsets.all(12),
           child: Row(
-            crossAxisAlignment: CrossAxisAlignment.center,
             children: [
-              // LEFT — TIME
               SizedBox(
                 width: 60,
                 child: Center(
@@ -137,15 +180,14 @@ class _AgendaPageState extends State<AgendaPage> {
 
               const SizedBox(width: 12),
 
-              // MIDDLE — ALWAYS SHOW 3 PLACEHOLDERS
               Expanded(
                 child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
                   mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    _buildPatientRow(names[0], presences[0]),
-                    _buildPatientRow(names[1], presences[1]),
-                    _buildPatientRow(names[2], presences[2]),
+                    _buildPatientRow(apptId, 0, names[0], presences[0]),
+                    _buildPatientRow(apptId, 1, names[1], presences[1]),
+                    _buildPatientRow(apptId, 2, names[2], presences[2]),
                   ],
                 ),
               ),
@@ -158,8 +200,7 @@ class _AgendaPageState extends State<AgendaPage> {
 
   /// Group appointments by day for display
   Map<DateTime, List<Map<String, dynamic>>> _groupByDay(
-    List<Map<String, dynamic>> rows) {
-
+      List<Map<String, dynamic>> rows) {
     final map = <DateTime, List<Map<String, dynamic>>>{};
 
     for (final a in rows) {
@@ -168,38 +209,28 @@ class _AgendaPageState extends State<AgendaPage> {
       map.putIfAbsent(day, () => []).add(a);
     }
 
-    // Sort days AND sort items inside each day
     final sorted = <DateTime, List<Map<String, dynamic>>>{};
     for (final k in map.keys.toList()..sort()) {
-      final dayList = map[k]!;
-      dayList.sort((a, b) {
+      final list = map[k]!;
+      list.sort((a, b) {
         final t1 = DateTime.parse(a['appointment_datetime']);
         final t2 = DateTime.parse(b['appointment_datetime']);
         return t1.compareTo(t2);
       });
-      sorted[k] = dayList;
+      sorted[k] = list;
     }
-
     return sorted;
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text("Agenda"),
-      ),
+      appBar: AppBar(title: const Text("Agenda")),
       body: FutureBuilder<List<Map<String, dynamic>>>(
         future: _futureAppointments,
         builder: (context, snapshot) {
-          if (snapshot.connectionState == ConnectionState.waiting) {
+          if (!snapshot.hasData) {
             return const Center(child: CircularProgressIndicator());
-          }
-          if (snapshot.hasError) {
-            return Center(
-              child: Text("Error: ${snapshot.error}",
-                  style: const TextStyle(color: Colors.red)),
-            );
           }
 
           final data = snapshot.data!;
@@ -216,16 +247,21 @@ class _AgendaPageState extends State<AgendaPage> {
             children: grouped.entries.map((entry) {
               final day = entry.key;
               final list = entry.value;
-              final label = DateFormat("EEEE, dd MMM yyyy").format(day);
+              final label =
+                  DateFormat("EEEE, dd MMM yyyy").format(day);
 
               return Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Padding(
-                    padding: const EdgeInsets.fromLTRB(12, 16, 12, 6),
-                    child: Text(label,
-                        style: const TextStyle(
-                            fontSize: 18, fontWeight: FontWeight.bold)),
+                    padding:
+                        const EdgeInsets.fromLTRB(12, 16, 12, 6),
+                    child: Text(
+                      label,
+                      style: const TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold),
+                    ),
                   ),
                   ...list.map(_buildAppointmentCard),
                 ],
