@@ -40,3 +40,5 @@ web/.dart_tool/
 # Logs
 *.log
 
+# local env
+.env
