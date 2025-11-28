@@ -213,24 +213,25 @@ class _AgendaPageState extends State<AgendaPage> {
     Color iconColor;
 
     if (isEmpty) {
-      icon = Icons.add_circle_outline;
-      iconColor = Colors.blue.withOpacity(0.7);
-    } else if (presence == null) {
-      icon = Icons.help_outline;
-      iconColor = Colors.grey;
-    } else if (presence == true) {
-      icon = Icons.check_circle;
-      iconColor = Colors.green;
-    } else {
-      icon = Icons.cancel;
-      iconColor = Colors.red;
-    }
+  icon = Icons.add_circle_outline;
+  iconColor = Colors.blue.withValues(alpha: 0.7);
+} else if (presence == null) {
+  icon = Icons.help_outline;
+  iconColor = Colors.grey; // grey already fine
+} else if (presence == true) {
+  icon = Icons.check_circle;
+  iconColor = Colors.green;
+} else {
+  icon = Icons.cancel;
+  iconColor = Colors.red;
+}
+
 
     return GestureDetector(
       onTap: isEmpty
           ? () => _addOrEditPersonDialog(apptId, index, null)
           : () => _cyclePresence(apptId, index, presence),
-      onLongPress: (isEmpty || name == null) ? null : () => _confirmRemoveDialog(apptId, index, name),
+      onLongPress: (isEmpty) ? null : () => _confirmRemoveDialog(apptId, index, name),
       onDoubleTap: isEmpty ? null : () => _addOrEditPersonDialog(apptId, index, name),
       child: Row(
         children: [
@@ -239,7 +240,7 @@ class _AgendaPageState extends State<AgendaPage> {
               isEmpty ? "(empty)" : name,
               style: TextStyle(
                 fontSize: 16,
-                color: isEmpty ? Colors.black.withOpacity(0.4) : Colors.black,
+                color: isEmpty ? Colors.black.withValues(alpha: 0.4) : Colors.black,
               ),
             ),
           ),
@@ -347,7 +348,7 @@ class _AgendaPageState extends State<AgendaPage> {
 
     return Container(
       padding: const EdgeInsets.symmetric(vertical: 12),
-      color: Colors.grey.withOpacity(0.10),
+      color: Colors.grey.withValues(alpha: 0.10),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
