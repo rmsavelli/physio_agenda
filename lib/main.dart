@@ -47,7 +47,7 @@ class _AgendaPageState extends State<AgendaPage> {
   }
 
   // -------------------------------------------------------------
-  // LOAD WEEK (no context is used here → safe)
+  // LOAD WEEK
   // -------------------------------------------------------------
   Future<void> _loadWeek() async {
     setState(() => _loading = true);
@@ -83,8 +83,73 @@ class _AgendaPageState extends State<AgendaPage> {
   }
 
   // -------------------------------------------------------------
-  // ADD PERSON (fixed: no context used after awaits unless mounted)
+  // REMOVE PERSON (long-press gesture)
   // -------------------------------------------------------------
+  Future<void> _removePerson(int apptId, int index) async {
+    final columnName = "patient_name${index + 1}";
+    final colPresence = "patient_presence${index + 1}";
+
+    await supabase.from('appointments').update({
+      columnName: null,
+      colPresence: null,
+    }).eq('id', apptId);
+
+    if (!mounted) return;
+
+    final appt = _appointments.firstWhere((a) => a['id'] == apptId);
+    appt[columnName] = null;
+    appt[colPresence] = null;
+
+    setState(() {});
+  }
+
+  Future<void> _confirmRemoveDialog(int apptId, int index, String name) async {
+  await showDialog(
+    context: context,
+    builder: (dialogContext) => AlertDialog(
+      title: const Text("Remove person"),
+      content: Text("Remove \"$name\" from this appointment?"),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(dialogContext).pop(),
+          child: const Text("Cancel"),
+        ),
+        TextButton(
+          onPressed: () {
+            Navigator.of(dialogContext).pop();  // close dialog first
+            _removePerson(apptId, index);       // do async work safely
+          },
+          child: const Text("Remove"),
+        ),
+      ],
+    ),
+  );
+}
+
+
+  // -------------------------------------------------------------
+  // ADD PERSON
+  // -------------------------------------------------------------
+  Future<void> _addPerson(
+    int apptId,
+    int index,
+    String column,
+    String name,
+  ) async {
+    await supabase.from('appointments').update({
+      column: name,
+      "patient_presence${index + 1}": null,
+    }).eq('id', apptId);
+
+    if (!mounted) return;
+
+    final appt = _appointments.firstWhere((a) => a['id'] == apptId);
+    appt[column] = name;
+    appt["patient_presence${index + 1}"] = null;
+
+    setState(() {});
+  }
+
   Future<void> _addPersonDialog(int apptId, int index) async {
     final controller = TextEditingController();
     final column = "patient_name${index + 1}";
@@ -103,27 +168,17 @@ class _AgendaPageState extends State<AgendaPage> {
             onPressed: () => Navigator.pop(dialogContext),
             child: const Text("Cancel"),
           ),
+
           TextButton(
-            onPressed: () async {
+            onPressed: () {
               final name = controller.text.trim();
               if (name.isEmpty) return;
 
-              // Supabase update
-              await supabase.from('appointments').update({
-                column: name,
-                "patient_presence${index + 1}": null,
-              }).eq('id', apptId);
-
-              if (!mounted) return;
-
-              // Local update
-              final appt = _appointments.firstWhere((a) => a['id'] == apptId);
-              appt[column] = name;
-              appt["patient_presence${index + 1}"] = null;
-
-              setState(() {});
-              if (!mounted) return;
+              // 1️⃣ Close the dialog immediately – before async calls
               Navigator.pop(dialogContext);
+
+              // 2️⃣ Now run async work safely outside the dialog
+              _addPerson(apptId, index, column, name);
             },
             child: const Text("Add"),
           ),
@@ -133,7 +188,7 @@ class _AgendaPageState extends State<AgendaPage> {
   }
 
   // -------------------------------------------------------------
-  // PRESENCE TOGGLE
+  // PRESENCE CYCLE
   // -------------------------------------------------------------
   Future<void> _updatePresence(int id, int index, bool? newValue) async {
     await supabase.from('appointments').update({
@@ -154,7 +209,7 @@ class _AgendaPageState extends State<AgendaPage> {
   }
 
   // -------------------------------------------------------------
-  // PATIENT ROW
+  // PATIENT ROW (now includes long-press remove)
   // -------------------------------------------------------------
   Widget _buildPatientRow(int apptId, int index, String? name, bool? presence) {
     final isEmpty = name == null || name.trim().isEmpty;
@@ -177,6 +232,9 @@ class _AgendaPageState extends State<AgendaPage> {
     }
 
     return GestureDetector(
+      onLongPress: isEmpty
+          ? null
+          : () => _confirmRemoveDialog(apptId, index, name), // REMOVE PERSON
       onTap: () async {
         if (isEmpty) {
           await _addPersonDialog(apptId, index);
@@ -201,7 +259,7 @@ class _AgendaPageState extends State<AgendaPage> {
           Icon(
             icon,
             color: iconColor,
-            size: 26,
+            size: 28,
             weight: 900,
             shadows: const [
               Shadow(blurRadius: 2, color: Colors.black26, offset: Offset(0, 1)),
@@ -266,9 +324,7 @@ class _AgendaPageState extends State<AgendaPage> {
     for (final appt in _appointments) {
       final dt = DateTime.parse(appt['appointment_datetime']);
       final day = DateTime(dt.year, dt.month, dt.day);
-      if (day.weekday <= 5) {
-        sorted.putIfAbsent(day, () => []).add(appt);
-      }
+      sorted.putIfAbsent(day, () => []).add(appt);
     }
 
     final result = <Map<String, dynamic>>[];
@@ -276,13 +332,11 @@ class _AgendaPageState extends State<AgendaPage> {
 
     for (final day in days) {
       result.add({'type': 'header', 'date': day});
-
       final list = sorted[day]!..sort((a, b) {
         final t1 = DateTime.parse(a['appointment_datetime']);
         final t2 = DateTime.parse(b['appointment_datetime']);
         return t1.compareTo(t2);
       });
-
       for (final appt in list) {
         result.add({'type': 'appointment', 'data': appt});
       }
@@ -330,9 +384,7 @@ class _AgendaPageState extends State<AgendaPage> {
   @override
   Widget build(BuildContext context) {
     if (_loading) {
-      return const Scaffold(
-        body: Center(child: CircularProgressIndicator()),
-      );
+      return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
 
     final flattened = _flattenAppointments();
@@ -349,8 +401,10 @@ class _AgendaPageState extends State<AgendaPage> {
                     itemCount: flattened.length,
                     itemBuilder: (context, index) {
                       final item = flattened[index];
+
                       if (item['type'] == 'header') {
                         final day = item['date'] as DateTime;
+
                         return Padding(
                           padding: const EdgeInsets.fromLTRB(12, 16, 12, 6),
                           child: Text(
@@ -359,6 +413,7 @@ class _AgendaPageState extends State<AgendaPage> {
                           ),
                         );
                       }
+
                       return _buildAppointmentCard(item['data']);
                     },
                   ),
