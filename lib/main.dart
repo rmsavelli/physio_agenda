@@ -7,10 +7,10 @@ void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await dotenv.load();
 
-  final supabaseUrl = dotenv.env['SUPABASE_URL']!;
-  final supabaseAnonKey = dotenv.env['SUPABASE_ANON_KEY']!;
+  final supabaseUrl = dotenv.env['SUPABASE_URL'];
+  final supabaseAnonKey = dotenv.env['SUPABASE_ANON_KEY'];
 
-  await Supabase.initialize(url: supabaseUrl, anonKey: supabaseAnonKey);
+  await Supabase.initialize(url: supabaseUrl!, anonKey: supabaseAnonKey!);
   runApp(const MyApp());
 }
 
@@ -46,13 +46,26 @@ class _AgendaPageState extends State<AgendaPage> {
     _loadWeek();
   }
 
+  // -------------------------------------------------------------
+  // LOAD WEEK (no context is used here → safe)
+  // -------------------------------------------------------------
   Future<void> _loadWeek() async {
     setState(() => _loading = true);
 
     final mondayUtc = DateTime.utc(
-        _currentWeekMonday.year, _currentWeekMonday.month, _currentWeekMonday.day);
+      _currentWeekMonday.year,
+      _currentWeekMonday.month,
+      _currentWeekMonday.day,
+    );
+
     final fridayUtc = DateTime.utc(
-        _currentWeekFriday.year, _currentWeekFriday.month, _currentWeekFriday.day, 23, 59, 59);
+      _currentWeekFriday.year,
+      _currentWeekFriday.month,
+      _currentWeekFriday.day,
+      23,
+      59,
+      59,
+    );
 
     final data = await supabase
         .from('appointments')
@@ -61,10 +74,67 @@ class _AgendaPageState extends State<AgendaPage> {
         .lte('appointment_datetime', fridayUtc.toIso8601String())
         .order('appointment_datetime');
 
-    _appointments = List<Map<String, dynamic>>.from(data);
-    setState(() => _loading = false);
+    if (!mounted) return;
+
+    setState(() {
+      _appointments = List<Map<String, dynamic>>.from(data);
+      _loading = false;
+    });
   }
 
+  // -------------------------------------------------------------
+  // ADD PERSON (fixed: no context used after awaits unless mounted)
+  // -------------------------------------------------------------
+  Future<void> _addPersonDialog(int apptId, int index) async {
+    final controller = TextEditingController();
+    final column = "patient_name${index + 1}";
+
+    await showDialog(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text("Add person"),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          decoration: const InputDecoration(hintText: "Enter patient name"),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text("Cancel"),
+          ),
+          TextButton(
+            onPressed: () async {
+              final name = controller.text.trim();
+              if (name.isEmpty) return;
+
+              // Supabase update
+              await supabase.from('appointments').update({
+                column: name,
+                "patient_presence${index + 1}": null,
+              }).eq('id', apptId);
+
+              if (!mounted) return;
+
+              // Local update
+              final appt = _appointments.firstWhere((a) => a['id'] == apptId);
+              appt[column] = name;
+              appt["patient_presence${index + 1}"] = null;
+
+              setState(() {});
+              if (!mounted) return;
+              Navigator.pop(dialogContext);
+            },
+            child: const Text("Add"),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // -------------------------------------------------------------
+  // PRESENCE TOGGLE
+  // -------------------------------------------------------------
   Future<void> _updatePresence(int id, int index, bool? newValue) async {
     await supabase.from('appointments').update({
       'patient_presence${index + 1}': newValue,
@@ -83,6 +153,9 @@ class _AgendaPageState extends State<AgendaPage> {
     setState(() {});
   }
 
+  // -------------------------------------------------------------
+  // PATIENT ROW
+  // -------------------------------------------------------------
   Widget _buildPatientRow(int apptId, int index, String? name, bool? presence) {
     final isEmpty = name == null || name.trim().isEmpty;
 
@@ -90,8 +163,8 @@ class _AgendaPageState extends State<AgendaPage> {
     Color iconColor;
 
     if (isEmpty) {
-      icon = Icons.remove_circle_outline;
-      iconColor = Colors.grey.withValues(alpha: 0.3);
+      icon = Icons.add_circle_outline;
+      iconColor = Colors.blue.withValues(alpha: 0.7);
     } else if (presence == null) {
       icon = Icons.help_outline;
       iconColor = Colors.grey;
@@ -104,13 +177,16 @@ class _AgendaPageState extends State<AgendaPage> {
     }
 
     return GestureDetector(
-      onTap: isEmpty
-          ? null
-          : () async {
-              final newPresence = _nextPresence(presence);
-              await _updatePresence(apptId, index, newPresence);
-              _updateLocalPresence(apptId, index, newPresence);
-            },
+      onTap: () async {
+        if (isEmpty) {
+          await _addPersonDialog(apptId, index);
+        } else {
+          final newPresence = _nextPresence(presence);
+          await _updatePresence(apptId, index, newPresence);
+          if (!mounted) return;
+          _updateLocalPresence(apptId, index, newPresence);
+        }
+      },
       child: Row(
         children: [
           Expanded(
@@ -125,31 +201,24 @@ class _AgendaPageState extends State<AgendaPage> {
           Icon(
             icon,
             color: iconColor,
-            size: 24,
+            size: 26,
             weight: 900,
-            shadows: const [Shadow(blurRadius: 2, color: Colors.black26, offset: Offset(0, 1))],
+            shadows: const [
+              Shadow(blurRadius: 2, color: Colors.black26, offset: Offset(0, 1)),
+            ],
           ),
         ],
       ),
     );
   }
 
+  // -------------------------------------------------------------
+  // APPOINTMENT CARD
+  // -------------------------------------------------------------
   Widget _buildAppointmentCard(Map<String, dynamic> appt) {
     final dt = DateTime.parse(appt["appointment_datetime"]);
     final hour = DateFormat("HH:mm").format(dt);
     final apptId = appt["id"] as int;
-
-    List<String?> names = [
-      appt['patient_name1'],
-      appt['patient_name2'],
-      appt['patient_name3'],
-    ];
-
-    List<bool?> presences = [
-      appt['patient_presence1'],
-      appt['patient_presence2'],
-      appt['patient_presence3'],
-    ];
 
     return Card(
       margin: const EdgeInsets.symmetric(vertical: 6, horizontal: 12),
@@ -175,9 +244,9 @@ class _AgendaPageState extends State<AgendaPage> {
                   mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    _buildPatientRow(apptId, 0, names[0], presences[0]),
-                    _buildPatientRow(apptId, 1, names[1], presences[1]),
-                    _buildPatientRow(apptId, 2, names[2], presences[2]),
+                    _buildPatientRow(apptId, 0, appt['patient_name1'], appt['patient_presence1']),
+                    _buildPatientRow(apptId, 1, appt['patient_name2'], appt['patient_presence2']),
+                    _buildPatientRow(apptId, 2, appt['patient_name3'], appt['patient_presence3']),
                   ],
                 ),
               ),
@@ -188,9 +257,12 @@ class _AgendaPageState extends State<AgendaPage> {
     );
   }
 
-  /// Flatten appointments with day headers
+  // -------------------------------------------------------------
+  // FLATTEN APPOINTMENTS
+  // -------------------------------------------------------------
   List<Map<String, dynamic>> _flattenAppointments() {
     final sorted = <DateTime, List<Map<String, dynamic>>>{};
+
     for (final appt in _appointments) {
       final dt = DateTime.parse(appt['appointment_datetime']);
       final day = DateTime(dt.year, dt.month, dt.day);
@@ -201,20 +273,27 @@ class _AgendaPageState extends State<AgendaPage> {
 
     final result = <Map<String, dynamic>>[];
     final days = sorted.keys.toList()..sort();
+
     for (final day in days) {
       result.add({'type': 'header', 'date': day});
+
       final list = sorted[day]!..sort((a, b) {
         final t1 = DateTime.parse(a['appointment_datetime']);
         final t2 = DateTime.parse(b['appointment_datetime']);
         return t1.compareTo(t2);
       });
+
       for (final appt in list) {
         result.add({'type': 'appointment', 'data': appt});
       }
     }
+
     return result;
   }
 
+  // -------------------------------------------------------------
+  // WEEK PAGINATION
+  // -------------------------------------------------------------
   void _prevWeek() {
     _currentWeekMonday = _currentWeekMonday.subtract(const Duration(days: 7));
     _currentWeekFriday = _currentWeekMonday.add(const Duration(days: 4));
@@ -245,9 +324,16 @@ class _AgendaPageState extends State<AgendaPage> {
     );
   }
 
+  // -------------------------------------------------------------
+  // BUILD
+  // -------------------------------------------------------------
   @override
   Widget build(BuildContext context) {
-    if (_loading) return const Scaffold(body: Center(child: CircularProgressIndicator()));
+    if (_loading) {
+      return const Scaffold(
+        body: Center(child: CircularProgressIndicator()),
+      );
+    }
 
     final flattened = _flattenAppointments();
 
@@ -272,10 +358,8 @@ class _AgendaPageState extends State<AgendaPage> {
                             style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
                           ),
                         );
-                      } else {
-                        final appt = item['data'] as Map<String, dynamic>;
-                        return _buildAppointmentCard(appt);
                       }
+                      return _buildAppointmentCard(item['data']);
                     },
                   ),
           ),
