@@ -553,7 +553,7 @@ class _AgendaPageState extends State<AgendaPage> {
           // Copy button appears only if the current week is empty AND starts in the future
           if (_isCurrentWeekEmpty && _weekStartsInFuture())
             IconButton(
-              icon: const Icon(Icons.copy),
+              icon: const Icon(Icons.auto_fix_high),
               tooltip: "Copy previous weeks day-by-day",
               onPressed: _copyWeekDayByDay,
             ),
