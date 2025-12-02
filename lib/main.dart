@@ -7,10 +7,10 @@ void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await dotenv.load();
 
-  final supabaseUrl = dotenv.env['SUPABASE_URL'];
-  final supabaseAnonKey = dotenv.env['SUPABASE_ANON_KEY'];
+  final supabaseUrl = dotenv.env['SUPABASE_URL']!;
+  final supabaseAnonKey = dotenv.env['SUPABASE_ANON_KEY']!;
 
-  await Supabase.initialize(url: supabaseUrl!, anonKey: supabaseAnonKey!);
+  await Supabase.initialize(url: supabaseUrl, anonKey: supabaseAnonKey);
   runApp(const MyApp());
 }
 
@@ -21,7 +21,7 @@ class MyApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return const MaterialApp(title: 'Agenda', home: AgendaPage());
+    return const MaterialApp(title: "Agenda", home: AgendaPage());
   }
 }
 
@@ -36,15 +36,27 @@ class _AgendaPageState extends State<AgendaPage> {
   List<Map<String, dynamic>> _appointments = [];
   bool _loading = true;
 
-  late DateTime _currentWeekMonday;
-  late DateTime _currentWeekFriday;
+  late DateTime _currentMonday;
+  late DateTime _currentFriday;
+
+  final List<String> fixedTimes = [
+    "08:30",
+    "09:30",
+    "10:30",
+    "11:30",
+    "12:30",
+    "14:00",
+    "15:00",
+    "16:00",
+    "17:00",
+  ];
 
   @override
   void initState() {
     super.initState();
     final today = DateTime.now();
-    _currentWeekMonday = today.subtract(Duration(days: today.weekday - 1));
-    _currentWeekFriday = _currentWeekMonday.add(const Duration(days: 4));
+    _currentMonday = today.subtract(Duration(days: today.weekday - 1));
+    _currentFriday = _currentMonday.add(const Duration(days: 4));
     _loadWeek();
   }
 
@@ -55,15 +67,15 @@ class _AgendaPageState extends State<AgendaPage> {
     setState(() => _loading = true);
 
     final mondayUtc = DateTime.utc(
-      _currentWeekMonday.year,
-      _currentWeekMonday.month,
-      _currentWeekMonday.day,
+      _currentMonday.year,
+      _currentMonday.month,
+      _currentMonday.day,
     );
 
     final fridayUtc = DateTime.utc(
-      _currentWeekFriday.year,
-      _currentWeekFriday.month,
-      _currentWeekFriday.day,
+      _currentFriday.year,
+      _currentFriday.month,
+      _currentFriday.day,
       23,
       59,
       59,
@@ -85,11 +97,46 @@ class _AgendaPageState extends State<AgendaPage> {
   }
 
   // -------------------------------------------------------------
+  // FIND EXISTING APPT OR NULL
+  // -------------------------------------------------------------
+  Map<String, dynamic>? _findAppointment(DateTime dt) {
+    for (final a in _appointments) {
+      final stored = DateTime.parse(a['appointment_datetime']).toLocal();
+      if (stored.year == dt.year &&
+          stored.month == dt.month &&
+          stored.day == dt.day &&
+          stored.hour == dt.hour &&
+          stored.minute == dt.minute) {
+        return a;
+      }
+    }
+    return null;
+  }
+
+  // -------------------------------------------------------------
+  // CREATE NEW APPOINTMENT
+  // -------------------------------------------------------------
+  Future<Map<String, dynamic>> _createAppointment(DateTime dt) async {
+    final inserted = await supabase.from("appointments").insert({
+      "appointment_datetime": dt.toUtc().toIso8601String(),
+      "patient_name1": null,
+      "patient_name2": null,
+      "patient_name3": null,
+      "patient_presence1": null,
+      "patient_presence2": null,
+      "patient_presence3": null,
+    }).select().single();
+
+    return inserted;
+  }
+
+  // -------------------------------------------------------------
   // ADD / EDIT PERSON
   // -------------------------------------------------------------
-  Future<void> _addOrEditPersonDialog(int apptId, int index, String? currentName) async {
+  Future<void> _addOrEditPersonDialog(DateTime dt, int index, Map<String, dynamic>? appt, String? currentName) async {
     final controller = TextEditingController(text: currentName);
-    final column = "patient_name${index + 1}";
+    final colName = "patient_name${index + 1}";
+    final colPresence = "patient_presence${index + 1}";
 
     await showDialog(
       context: context,
@@ -107,11 +154,8 @@ class _AgendaPageState extends State<AgendaPage> {
           ),
           TextButton(
             onPressed: () {
-              final name = controller.text.trim();
-              if (name.isEmpty) return;
-
-              Navigator.of(dialogContext).pop(); // Close dialog first
-              _addOrEditPerson(apptId, index, column, name);
+              Navigator.of(dialogContext).pop();
+              _applyAddOrEdit(dt, index, appt, colName, colPresence, controller.text.trim());
             },
             child: Text(currentName == null ? "Add" : "Save"),
           ),
@@ -120,17 +164,35 @@ class _AgendaPageState extends State<AgendaPage> {
     );
   }
 
-  Future<void> _addOrEditPerson(int apptId, int index, String column, String name) async {
-    await supabase.from('appointments').update({
-      column: name,
-      "patient_presence${index + 1}": null,
-    }).eq('id', apptId);
+  Future<void> _applyAddOrEdit(
+    DateTime dt,
+    int index,
+    Map<String, dynamic>? appt,
+    String colName,
+    String colPresence,
+    String name,
+  ) async {
+    if (name.isEmpty) return;
+
+    Map<String, dynamic> row;
+
+    if (appt == null) {
+      // Create new row
+      row = await _createAppointment(dt);
+      _appointments.add(row);
+    } else {
+      row = appt;
+    }
+
+    await supabase.from("appointments").update({
+      colName: name,
+      colPresence: null,
+    }).eq('id', row['id']);
 
     if (!mounted) return;
 
-    final appt = _appointments.firstWhere((a) => a['id'] == apptId);
-    appt[column] = name;
-    appt["patient_presence${index + 1}"] = null;
+    row[colName] = name;
+    row[colPresence] = null;
 
     setState(() {});
   }
@@ -138,25 +200,7 @@ class _AgendaPageState extends State<AgendaPage> {
   // -------------------------------------------------------------
   // REMOVE PERSON
   // -------------------------------------------------------------
-  Future<void> _removePerson(int apptId, int index) async {
-    final columnName = "patient_name${index + 1}";
-    final colPresence = "patient_presence${index + 1}";
-
-    await supabase.from('appointments').update({
-      columnName: null,
-      colPresence: null,
-    }).eq('id', apptId);
-
-    if (!mounted) return;
-
-    final appt = _appointments.firstWhere((a) => a['id'] == apptId);
-    appt[columnName] = null;
-    appt[colPresence] = null;
-
-    setState(() {});
-  }
-
-  Future<void> _confirmRemoveDialog(int apptId, int index, String name) async {
+  Future<void> _confirmRemoveDialog(Map<String, dynamic> appt, int index, String name) async {
     await showDialog(
       context: context,
       builder: (dialogContext) => AlertDialog(
@@ -169,8 +213,8 @@ class _AgendaPageState extends State<AgendaPage> {
           ),
           TextButton(
             onPressed: () {
-              Navigator.of(dialogContext).pop(); // close dialog first
-              _removePerson(apptId, index);
+              Navigator.of(dialogContext).pop();
+              _removePerson(appt, index);
             },
             child: const Text("Remove"),
           ),
@@ -179,10 +223,27 @@ class _AgendaPageState extends State<AgendaPage> {
     );
   }
 
+  Future<void> _removePerson(Map<String, dynamic> appt, int index) async {
+    final colName = "patient_name${index + 1}";
+    final colPresence = "patient_presence${index + 1}";
+
+    await supabase.from("appointments").update({
+      colName: null,
+      colPresence: null,
+    }).eq("id", appt['id']);
+
+    if (!mounted) return;
+
+    appt[colName] = null;
+    appt[colPresence] = null;
+
+    setState(() {});
+  }
+
   // -------------------------------------------------------------
   // PRESENCE CYCLE
   // -------------------------------------------------------------
-  Future<void> _cyclePresence(int apptId, int index, bool? current) async {
+  Future<void> _cyclePresence(Map<String, dynamic> appt, int index, bool? current) async {
     bool? next;
     if (current == null) {
       next = true;
@@ -192,47 +253,48 @@ class _AgendaPageState extends State<AgendaPage> {
       next = null;
     }
 
-    final column = "patient_presence${index + 1}";
+    final col = "patient_presence${index + 1}";
 
-    await supabase.from('appointments').update({column: next}).eq('id', apptId);
+    await supabase.from("appointments").update({col: next}).eq("id", appt['id']);
 
     if (!mounted) return;
 
-    final appt = _appointments.firstWhere((a) => a['id'] == apptId);
-    appt[column] = next;
+    appt[col] = next;
     setState(() {});
   }
 
   // -------------------------------------------------------------
   // PATIENT ROW
   // -------------------------------------------------------------
-  Widget _buildPatientRow(int apptId, int index, String? name, bool? presence) {
+  Widget _buildPatientRow(DateTime dt, Map<String, dynamic>? appt, int index) {
+    final name = appt?["patient_name${index + 1}"];
+    final presence = appt?["patient_presence${index + 1}"];
+
     final isEmpty = name == null || name.trim().isEmpty;
 
     IconData icon;
     Color iconColor;
 
     if (isEmpty) {
-  icon = Icons.add_circle_outline;
-  iconColor = Colors.blue.withValues(alpha: 0.7);
-} else if (presence == null) {
-  icon = Icons.help_outline;
-  iconColor = Colors.grey; // grey already fine
-} else if (presence == true) {
-  icon = Icons.check_circle;
-  iconColor = Colors.green;
-} else {
-  icon = Icons.cancel;
-  iconColor = Colors.red;
-}
-
+      icon = Icons.add_circle_outline;
+      iconColor = Colors.blue.withValues(alpha: 0.7);
+    } else if (presence == null) {
+      icon = Icons.help_outline;
+      iconColor = Colors.grey;
+    } else if (presence == true) {
+      icon = Icons.check_circle;
+      iconColor = Colors.green;
+    } else {
+      icon = Icons.cancel;
+      iconColor = Colors.red;
+    }
 
     return GestureDetector(
-      onTap: isEmpty
-          ? () => _addOrEditPersonDialog(apptId, index, null)
-          : () => _cyclePresence(apptId, index, presence),
-      onLongPress: (isEmpty) ? null : () => _confirmRemoveDialog(apptId, index, name),
-      onDoubleTap: isEmpty ? null : () => _addOrEditPersonDialog(apptId, index, name),
+      onTap: () => isEmpty
+          ? _addOrEditPersonDialog(dt, index, appt, null)
+          : _cyclePresence(appt!, index, presence),
+      onDoubleTap: isEmpty ? null : () => _addOrEditPersonDialog(dt, index, appt, name),
+      onLongPress: isEmpty ? null : () => _confirmRemoveDialog(appt!, index, name),
       child: Row(
         children: [
           Expanded(
@@ -240,15 +302,13 @@ class _AgendaPageState extends State<AgendaPage> {
               isEmpty ? "(empty)" : name,
               style: TextStyle(
                 fontSize: 16,
-                color: isEmpty ? Colors.black.withValues(alpha: 0.4) : Colors.black,
+                color: isEmpty
+                    ? Colors.black.withValues(alpha: 0.4)
+                    : Colors.black,
               ),
             ),
           ),
-          Icon(
-            icon,
-            color: iconColor,
-            size: 28,
-          ),
+          Icon(icon, color: iconColor, size: 28),
         ],
       ),
     );
@@ -257,10 +317,8 @@ class _AgendaPageState extends State<AgendaPage> {
   // -------------------------------------------------------------
   // APPOINTMENT CARD
   // -------------------------------------------------------------
-  Widget _buildAppointmentCard(Map<String, dynamic> appt) {
-    final dt = DateTime.parse(appt["appointment_datetime"]);
+  Widget _buildAppointmentCard(DateTime dt, Map<String, dynamic>? appt) {
     final hour = DateFormat("HH:mm").format(dt);
-    final apptId = appt["id"] as int;
 
     return Card(
       margin: const EdgeInsets.symmetric(vertical: 6, horizontal: 12),
@@ -274,10 +332,11 @@ class _AgendaPageState extends State<AgendaPage> {
               SizedBox(
                 width: 60,
                 child: Center(
-                  child: Text(
-                    hour,
-                    style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-                  ),
+                  child: Text(hour,
+                      style: const TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                      )),
                 ),
               ),
               const SizedBox(width: 12),
@@ -286,9 +345,9 @@ class _AgendaPageState extends State<AgendaPage> {
                   mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    _buildPatientRow(apptId, 0, appt['patient_name1'], appt['patient_presence1']),
-                    _buildPatientRow(apptId, 1, appt['patient_name2'], appt['patient_presence2']),
-                    _buildPatientRow(apptId, 2, appt['patient_name3'], appt['patient_presence3']),
+                    _buildPatientRow(dt, appt, 0),
+                    _buildPatientRow(dt, appt, 1),
+                    _buildPatientRow(dt, appt, 2),
                   ],
                 ),
               ),
@@ -300,60 +359,33 @@ class _AgendaPageState extends State<AgendaPage> {
   }
 
   // -------------------------------------------------------------
-  // FLATTEN APPOINTMENTS
-  // -------------------------------------------------------------
-  List<Map<String, dynamic>> _flattenAppointments() {
-    final byDay = <DateTime, List<Map<String, dynamic>>>{};
-
-    for (final a in _appointments) {
-      final dt = DateTime.parse(a['appointment_datetime']);
-      final key = DateTime(dt.year, dt.month, dt.day);
-      byDay.putIfAbsent(key, () => []).add(a);
-    }
-
-    final output = <Map<String, dynamic>>[];
-    final days = byDay.keys.toList()..sort();
-
-    for (final d in days) {
-      output.add({'type': 'header', 'date': d});
-      final list = byDay[d]!
-        ..sort((a, b) => DateTime.parse(a['appointment_datetime'])
-            .compareTo(DateTime.parse(b['appointment_datetime'])));
-      for (final a in list) {
-        output.add({'type': 'appointment', 'data': a});
-      }
-    }
-
-    return output;
-  }
-
-  // -------------------------------------------------------------
   // WEEK PAGINATION
   // -------------------------------------------------------------
   void _prevWeek() {
-    _currentWeekMonday = _currentWeekMonday.subtract(const Duration(days: 7));
-    _currentWeekFriday = _currentWeekMonday.add(const Duration(days: 4));
+    _currentMonday = _currentMonday.subtract(const Duration(days: 7));
+    _currentFriday = _currentMonday.add(const Duration(days: 4));
     _loadWeek();
   }
 
   void _nextWeek() {
-    _currentWeekMonday = _currentWeekMonday.add(const Duration(days: 7));
-    _currentWeekFriday = _currentWeekMonday.add(const Duration(days: 4));
+    _currentMonday = _currentMonday.add(const Duration(days: 7));
+    _currentFriday = _currentMonday.add(const Duration(days: 4));
     _loadWeek();
   }
 
   Widget _buildPaginator() {
     final fmt = DateFormat("dd MMM");
-    final label = "${fmt.format(_currentWeekMonday)} — ${fmt.format(_currentWeekFriday)}";
-
     return Container(
       padding: const EdgeInsets.symmetric(vertical: 12),
-      color: Colors.grey.withValues(alpha: 0.10),
+      color: Colors.grey.withValues(alpha: 0.12),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
           IconButton(icon: const Icon(Icons.chevron_left, size: 32), onPressed: _prevWeek),
-          Text(label, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+          Text(
+            "${fmt.format(_currentMonday)} — ${fmt.format(_currentFriday)}",
+            style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+          ),
           IconButton(icon: const Icon(Icons.chevron_right, size: 32), onPressed: _nextWeek),
         ],
       ),
@@ -369,33 +401,47 @@ class _AgendaPageState extends State<AgendaPage> {
       return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
 
-    final flattened = _flattenAppointments();
-
     return Scaffold(
       appBar: AppBar(title: const Text("Agenda")),
       body: Column(
         children: [
           _buildPaginator(),
           Expanded(
-            child: flattened.isEmpty
-                ? const Center(child: Text("No appointments found.", style: TextStyle(fontSize: 18)))
-                : ListView.builder(
-                    itemCount: flattened.length,
-                    itemBuilder: (context, index) {
-                      final item = flattened[index];
-                      if (item['type'] == 'header') {
-                        final day = item['date'] as DateTime;
-                        return Padding(
-                          padding: const EdgeInsets.fromLTRB(12, 16, 12, 6),
-                          child: Text(
-                            DateFormat("EEEE, dd MMM").format(day),
-                            style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-                          ),
-                        );
-                      }
-                      return _buildAppointmentCard(item['data']);
-                    },
-                  ),
+            child: ListView.builder(
+              itemCount: 5 * fixedTimes.length,
+              itemBuilder: (context, index) {
+                final dayOffset = index ~/ fixedTimes.length;
+                final timeOffset = index % fixedTimes.length;
+
+                final day = _currentMonday.add(Duration(days: dayOffset));
+
+                final parts = fixedTimes[timeOffset].split(":");
+                final hour = int.parse(parts[0]);
+                final minute = int.parse(parts[1]);
+
+                final dt = DateTime(day.year, day.month, day.day, hour, minute);
+                final appt = _findAppointment(dt);
+
+                // Header at first slot of each day
+                if (timeOffset == 0) {
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(12, 16, 12, 6),
+                        child: Text(
+                          DateFormat("EEEE, dd MMM").format(day),
+                          style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                        ),
+                      ),
+                      _buildAppointmentCard(dt, appt),
+                    ],
+                  );
+                }
+
+                return _buildAppointmentCard(dt, appt);
+              },
+            ),
           ),
         ],
       ),
